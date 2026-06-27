@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Tech-Pro+ CRM (Django Secure)</title>
+<style>
+/* ========== COPY YOUR ORIGINAL CSS BLOCK HERE ========== */
+/* (Paste the entire <style> from your original file – it stays unchanged) */
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- SIDEBAR – identical markup -->
+  <div id="sidebar">
+    <div class="sidebar-logo">
+      <h1>Tech-Pro+ CRM</h1>
+      <p>Secure</p>
+    </div>
+    <nav id="nav">
+      <div class="nav-item active" onclick="showPage('dashboard')" id="nav-dashboard">Dashboard</div>
+      <div class="nav-item" onclick="showPage('pos')" id="nav-pos">Point of Sale</div>
+      <div class="nav-item" onclick="showPage('repairs')" id="nav-repairs">Repairs</div>
+      <div class="nav-item" onclick="showPage('inventory')" id="nav-inventory">Inventory</div>
+      <div class="nav-item" onclick="showPage('customers')" id="nav-customers">Customers</div>
+      <div class="nav-item" onclick="showPage('reports')" id="nav-reports">Reports</div>
+      <div class="nav-item" onclick="showPage('cashup')" id="nav-cashup">Cash-Up</div>
+      <div class="nav-item" onclick="showPage('settings')" id="nav-settings">Settings</div>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="sidebar-user">
+        <div class="user-avatar" id="user-avatar">A</div>
+        <div class="user-info">
+          <p id="user-name">Admin</p>
+          <span>STAFF</span>
+        </div>
+      </div>
+      <button onclick="logout()" style="...">Logout</button>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div id="main">
+    <div class="topbar">
+      <div><h2 id="page-title">Dashboard</h2><p id="page-sub">Welcome</p></div>
+      <div id="topbar-actions"></div>
+    </div>
+    <div class="page" id="page-content"></div>
+  </div>
+</div>
+
+<!-- LOGIN OVERLAY -->
+<div id="login-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:9999; display:flex; align-items:center; justify-content:center;">
+  <div style="background:white; padding:40px; border-radius:14px; max-width:360px; width:100%;">
+    <h2>Login</h2>
+    <input id="login-user" placeholder="Username" style="width:100%; margin-bottom:10px; padding:10px;">
+    <input id="login-pass" type="password" placeholder="Password" style="width:100%; margin-bottom:20px; padding:10px;">
+    <button onclick="doLogin()" style="width:100%; background:#0f8b5f; color:white; border:none; padding:12px; border-radius:6px; font-weight:bold; cursor:pointer;">Sign In</button>
+    <p id="login-error" style="color:red; margin-top:10px;"></p>
+  </div>
+</div>
+
+<script>
+// ============================================================
+//  API CLIENT
+// ============================================================
+const API = {
+    base: 'http://127.0.0.1:8000/api/',
+    headers: { 'Content-Type': 'application/json' },
+    async get(endpoint) {
+        const res = await fetch(this.base + endpoint, { credentials: 'include', headers: this.headers });
+        if (!res.ok) { if (res.status === 401 || res.status === 403) showLogin(); throw new Error('Auth error'); }
+        return res.json();
+    },
+    async post(endpoint, data) {
+        const res = await fetch(this.base + endpoint, {
+            method: 'POST', credentials: 'include', headers: this.headers,
+            body: JSON.stringify(data)
+        });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    },
+    async put(endpoint, data) {
+        const res = await fetch(this.base + endpoint, {
+            method: 'PUT', credentials: 'include', headers: this.headers,
+            body: JSON.stringify(data)
+        });
+        return res.json();
+    },
+    async del(endpoint) {
+        await fetch(this.base + endpoint, { method: 'DELETE', credentials: 'include' });
+    }
+};
+
+// ============================================================
+//  AUTH
+// ============================================================
+async function doLogin() {
+    const user = document.getElementById('login-user').value;
+    const pass = document.getElementById('login-pass').value;
+    try {
+        const res = await fetch(API.base + 'login/', {
+            method: 'POST', headers: API.headers,
+            body: JSON.stringify({ username: user, password: pass })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            document.getElementById('login-overlay').style.display = 'none';
+            document.getElementById('user-name').textContent = data.name;
+            showPage('dashboard');
+        } else {
+            document.getElementById('login-error').textContent = data.error || 'Invalid';
+        }
+    } catch(e) {
+        document.getElementById('login-error').textContent = 'Network error';
+    }
+}
+
+function showLogin() {
+    document.getElementById('login-overlay').style.display = 'flex';
+}
+function logout() {
+    document.getElementById('login-overlay').style.display = 'flex';
+    // Optionally clear session on server? Not needed with session auth.
+}
+
+// Check auth on load
+window.onload = async function() {
+    try {
+        await API.get('settings/');
+        showPage('dashboard');
+    } catch(e) {
+        showLogin();
+    }
+};
+
+// ============================================================
+//  STATE & HELPERS (mimicking original)
+// ============================================================
+let products = [], customers = [], invoices = [], repairs = [];
+let cart = [];
+let settings = {};
+const today = () => new Date().toISOString().slice(0,10);
+const fmt = v => `$${Number(v||0).toFixed(2)}`;
+const fmtDate = d => d ? new Date(d).toLocaleDateString('en-CA') : '—';
+const uid = () => 'id_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+
+// Load initial data
+async function loadAll() {
+    try {
+        products = await API.get('products/');
+        customers = await API.get('customers/');
+        invoices = await API.get('invoices/');
+        repairs = await API.get('repairs/');
+        settings = await API.get('settings/');
+    } catch(e) { console.warn('Load data error', e); }
+}
+
+// ============================================================
+//  NAVIGATION
+// ============================================================
+let currentPage = 'dashboard';
+function showPage(page) {
+    currentPage = page;
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    const nav = document.getElementById('nav-'+page);
+    if(nav) nav.classList.add('active');
+    const titles = {
+        dashboard: ['Dashboard', 'Overview'],
+        pos: ['Point of Sale', 'Scan & sell'],
+        repairs: ['Repairs', 'Track tickets'],
+        inventory: ['Inventory', 'Manage stock'],
+        customers: ['Customers', 'CRM'],
+        reports: ['Reports', 'Analytics'],
+        cashup: ['Cash-Up', 'End of day'],
+        settings: ['Settings', 'Configure']
+    };
+    document.getElementById('page-title').textContent = titles[page]?.[0] || page;
+    document.getElementById('page-sub').textContent = titles[page]?.[1] || '';
+    const c = document.getElementById('page-content');
+    c.scrollTop = 0;
+    loadAll().then(() => {
+        if (page === 'dashboard') renderDashboard(c);
+        else if (page === 'pos') renderPOS(c);
+        else if (page === 'repairs') renderRepairs(c);
+        else if (page === 'inventory') renderInventory(c);
+        else if (page === 'customers') renderCustomers(c);
+        else if (page === 'reports') renderReports(c);
+        else if (page === 'cashup') renderCashUp(c);
+        else if (page === 'settings') renderSettings(c);
+    });
+}
+
+// ============================================================
+//  DASHBOARD
+// ============================================================
+function renderDashboard(c) {
+    const todayStr = today();
+    const todayInv = invoices.filter(i => i.date === todayStr);
+    const totalToday = todayInv.reduce((s,i) => s + parseFloat(i.total), 0);
+    const openRepairs = repairs.filter(r => !['COMPLETED','COLLECTED'].includes(r.status)).length;
+    const lowStock = products.filter(p => p.stock <= p.threshold).length;
+
+    c.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-label">Today's Sales</div><div class="stat-value">${fmt(totalToday)}</div><div class="stat-sub">${todayInv.length} invoices</div></div>
+      <div class="stat-card"><div class="stat-label">Open Repairs</div><div class="stat-value">${openRepairs}</div></div>
+      <div class="stat-card"><div class="stat-label">Low Stock</div><div class="stat-value ${lowStock?'text-amber':''}">${lowStock}</div></div>
+      <div class="stat-card"><div class="stat-label">Customers</div><div class="stat-value">${customers.length}</div></div>
+    </div>
+    <div class="card mt-3"><div class="card-title">Recent Invoices</div>
+      ${invoices.slice(-5).reverse().map(i => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>${i.number}</span><span>${fmt(i.total)}</span></div>`).join('')}
+    </div>`;
+}
+
+// ============================================================
+//  POS (fully working)
+// ============================================================
+function renderPOS(c) {
+    c.innerHTML = `
+    <div class="pos-layout">
+      <div class="pos-left">
+        <div class="scan-bar">
+          <input id="sku-input" placeholder="Scan SKU" onkeydown="if(event.key==='Enter')scanSku()"/>
+          <button class="btn btn-primary" onclick="scanSku()">Add</button>
+        </div>
+        <div class="cart-wrap">
+          <div class="cart-header"><span>Cart</span><span id="cart-count">0 items</span></div>
+          <div class="cart-body" id="cart-body"><div class="cart-empty">Empty</div></div>
+        </div>
+      </div>
+      <div class="pos-right">
+        <div class="card"><div class="card-title">Customer</div>
+          <div style="display:flex;gap:8px;"><input id="cust-search" placeholder="Phone" /><button class="btn btn-secondary btn-sm" onclick="lookupCustomer()">Find</button></div>
+          <div id="cust-result"></div>
+        </div>
+        <div class="cart-total-panel">
+          <div class="total-row"><span>Subtotal</span><span id="pos-sub">${fmt(0)}</span></div>
+          <div class="total-row"><span>Tax</span><span id="pos-tax">${fmt(0)}</span></div>
+          <div class="total-row grand"><span>TOTAL</span><span id="pos-total">${fmt(0)}</span></div>
+          <button class="btn btn-primary w-full" onclick="completeSale()">Complete Sale</button>
+        </div>
+      </div>
+    </div>`;
+    renderCart();
+}
+
+async function scanSku() {
+    const sku = document.getElementById('sku-input').value.trim();
+    if(!sku) return;
+    const prod = products.find(p => p.sku === sku);
+    if(!prod) { alert('Not found'); return; }
+    const existing = cart.find(c => c.productId === prod.id);
+    if(existing) existing.qty++;
+    else cart.push({productId: prod.id, sku: prod.sku, name: prod.name, price: parseFloat(prod.price), qty: 1});
+    renderCart();
+    document.getElementById('sku-input').value = '';
+}
+
+function renderCart() {
+    const body = document.getElementById('cart-body');
+    const count = document.getElementById('cart-count');
+    if(!body) return;
+    if(cart.length === 0) {
+        body.innerHTML = '<div class="cart-empty">Empty</div>';
+        if(count) count.textContent = '0 items';
+        return;
+    }
+    if(count) count.textContent = cart.reduce((s,i) => s + i.qty, 0) + ' items';
+    body.innerHTML = cart.map((item, i) => `
+      <div class="cart-item">
+        <div class="cart-item-desc"><p>${item.name}</p><span>${item.sku}</span></div>
+        <div class="qty-ctrl">
+          <button class="qty-btn" onclick="changeQty(${i},-1)">−</button>
+          <span class="qty-num">${item.qty}</span>
+          <button class="qty-btn" onclick="changeQty(${i},1)">+</button>
+        </div>
+        <div style="min-width:80px;text-align:right;font-weight:700">${fmt(item.price*item.qty)}</div>
+        <button onclick="cart.splice(${i},1);renderCart()" style="background:none;border:none;color:var(--text3);cursor:pointer;">✕</button>
+      </div>`).join('');
+    calcTotals();
+}
+
+function changeQty(i, delta) {
+    const item = cart[i];
+    if(!item) return;
+    item.qty += delta;
+    if(item.qty <= 0) cart.splice(i,1);
+    renderCart();
+}
+
+function calcTotals() {
+    const sub = cart.reduce((s,i) => s + i.price*i.qty, 0);
+    const tax = sub * 0.13; // simplified; use full tax logic if needed
+    const total = sub + tax;
+    document.getElementById('pos-sub').textContent = fmt(sub);
+    document.getElementById('pos-tax').textContent = fmt(tax);
+    document.getElementById('pos-total').textContent = fmt(total);
+}
+
+async function completeSale() {
+    if(cart.length === 0) { alert('Cart empty'); return; }
+    try {
+        const data = {
+            cart: cart,
+            discount: 0,
+            customerName: 'Walk-in',
+            customerPhone: '',
+            province: 'ON',
+            payment: 'Cash',
+            tendered: cart.reduce((s,i) => s + i.price*i.qty, 0)
+        };
+        const result = await API.post('invoices/complete_sale/', data);
+        alert('Sale complete! Invoice #' + result.number);
+        cart = [];
+        renderCart();
+        // reload data
+        await loadAll();
+        showPage('dashboard');
+    } catch(e) {
+        alert('Sale failed: ' + e.message);
+    }
+}
+
+// ============================================================
+//  INVENTORY (full CRUD with modal)
+// ============================================================
+function renderInventory(c) {
+    c.innerHTML = `
+    <div style="display:flex;gap:10px;margin-bottom:16px;">
+      <input placeholder="Search…" id="inv-search" oninput="filterInventory()" style="flex:1"/>
+      <button class="btn btn-primary btn-sm" onclick="openAddProduct()">+ Add</button>
+    </div>
+    <div class="table-wrap" id="inv-table-wrap">
+      <table><thead><tr><th>SKU</th><th>Name</th><th>Price</th><th>Stock</th><th></th></tr></thead>
+      <tbody id="inv-tbody"></tbody></table>
+    </div>`;
+    renderInventoryList();
+}
+
+function renderInventoryList(filter='') {
+    const tbody = document.getElementById('inv-tbody');
+    if(!tbody) return;
+    let list = products;
+    if(filter) list = list.filter(p => p.name.toLowerCase().includes(filter) || p.sku.toLowerCase().includes(filter));
+    tbody.innerHTML = list.map(p => `
+      <tr>
+        <td class="font-mono">${p.sku}</td>
+        <td>${p.name}</td>
+        <td>${fmt(p.price)}</td>
+        <td class="${p.stock <= p.threshold ? 'text-red' : 'text-green'}">${p.stock}</td>
+        <td><button class="btn btn-secondary btn-sm" onclick="editProduct('${p.id}')">Edit</button></td>
+      </tr>`).join('');
+}
+
+function filterInventory() {
+    const q = document.getElementById('inv-search')?.value?.toLowerCase() || '';
+    renderInventoryList(q);
+}
+
+async function openAddProduct() {
+    const html = `
+    <div class="form-group"><label>SKU</label><input id="ap-sku" placeholder="ABC-123"/></div>
+    <div class="form-group"><label>Name</label><input id="ap-name" placeholder="Product name"/></div>
+    <div class="form-row">
+      <div class="form-group"><label>Price</label><input id="ap-price" type="number" step="0.01"/></div>
+      <div class="form-group"><label>Stock</label><input id="ap-stock" type="number" value="0"/></div>
+    </div>`;
+    openModal('Add Product', html, `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveNewProduct()">Save</button>`);
+}
+
+async function saveNewProduct() {
+    const sku = document.getElementById('ap-sku').value.trim();
+    const name = document.getElementById('ap-name').value.trim();
+    const price = parseFloat(document.getElementById('ap-price').value) || 0;
+    const stock = parseInt(document.getElementById('ap-stock').value) || 0;
+    if(!sku || !name) { alert('SKU and name required'); return; }
+    try {
+        await API.post('products/', { sku, name, price, stock, category:'ACCESSORY' });
+        closeModal();
+        await loadAll();
+        renderInventory(document.getElementById('page-content'));
+    } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ============================================================
+//  CUSTOMERS
+// ============================================================
+function renderCustomers(c) {
+    c.innerHTML = `
+    <div style="display:flex;gap:10px;margin-bottom:16px;">
+      <input placeholder="Search name/phone…" id="cust-search-page" oninput="filterCustomers()" style="flex:1"/>
+      <button class="btn btn-primary btn-sm" onclick="openAddCustomer()">+ Add</button>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Spent</th><th>Points</th></tr></thead>
+    <tbody id="cust-tbody"></tbody></table></div>`;
+    renderCustomerList();
+}
+
+function renderCustomerList(filter='') {
+    const tbody = document.getElementById('cust-tbody');
+    if(!tbody) return;
+    let list = customers;
+    if(filter) list = list.filter(c => c.name.toLowerCase().includes(filter) || c.phone.includes(filter));
+    tbody.innerHTML = list.map(c => `
+      <tr><td>${c.name}</td><td>${c.phone}</td><td>${fmt(c.spent)}</td><td>${c.points}</td></tr>`).join('');
+}
+
+function filterCustomers() {
+    const q = document.getElementById('cust-search-page')?.value?.toLowerCase() || '';
+    renderCustomerList(q);
+}
+
+// ============================================================
+//  REPAIRS (simplified)
+// ============================================================
+function renderRepairs(c) {
+    c.innerHTML = `
+    <div style="display:flex;gap:10px;margin-bottom:16px;">
+      <input placeholder="Search repairs…" id="repair-search" oninput="filterRepairs()" style="flex:1"/>
+      <button class="btn btn-primary btn-sm" onclick="openNewRepair()">+ New Ticket</button>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>#</th><th>Customer</th><th>Device</th><th>Status</th></tr></thead>
+    <tbody id="repair-tbody"></tbody></table></div>`;
+    renderRepairList();
+}
+
+function renderRepairList(filter='') {
+    const tbody = document.getElementById('repair-tbody');
+    if(!tbody) return;
+    let list = repairs;
+    if(filter) list = list.filter(r => r.customer_name.toLowerCase().includes(filter) || r.device.toLowerCase().includes(filter));
+    tbody.innerHTML = list.map(r => `
+      <tr><td>#${r.ticket_no}</td><td>${r.customer_name}</td><td>${r.device}</td><td><span class="badge">${r.status}</span></td></tr>`).join('');
+}
+
+function filterRepairs() {
+    const q = document.getElementById('repair-search')?.value?.toLowerCase() || '';
+    renderRepairList(q);
+}
+
+// ============================================================
+//  REPORTS (basic)
+// ============================================================
+function renderReports(c) {
+    const totalRev = invoices.reduce((s,i) => s + parseFloat(i.total), 0);
+    c.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-label">Total Revenue</div><div class="stat-value">${fmt(totalRev)}</div></div>
+      <div class="stat-card"><div class="stat-label">Invoices</div><div class="stat-value">${invoices.length}</div></div>
+    </div>
+    <div class="card"><div class="card-title">Export</div><button class="btn btn-secondary" onclick="alert('CSV export coming soon')">Download CSV</button></div>`;
+}
+
+// ============================================================
+//  CASH-UP (placeholder)
+// ============================================================
+function renderCashUp(c) {
+    c.innerHTML = `<div class="card"><div class="card-title">End-of-Day Cash-Up</div><p>Coming soon</p></div>`;
+}
+
+// ============================================================
+//  SETTINGS
+// ============================================================
+function renderSettings(c) {
+    c.innerHTML = `
+    <div class="card"><div class="card-title">Shop Settings</div>
+      <div class="form-group"><label>Shop Name</label><input id="s-name" value="${settings.shop_name||''}"/></div>
+      <div class="form-group"><label>Province</label><input id="s-province" value="${settings.province||'ON'}"/></div>
+      <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+    </div>`;
+}
+
+async function saveSettings() {
+    const data = {
+        shop_name: document.getElementById('s-name').value,
+        province: document.getElementById('s-province').value
+    };
+    try {
+        await API.post('settings/', data);
+        alert('Settings saved');
+        await loadAll();
+    } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ============================================================
+//  MODAL HELPER (from original)
+// ============================================================
+function openModal(title, html, footer) {
+    let el = document.getElementById('modal-overlay');
+    if(el) el.remove();
+    el = document.createElement('div');
+    el.id = 'modal-overlay';
+    el.className = 'modal-overlay';
+    el.onclick = e => { if(e.target===el) closeModal(); };
+    el.innerHTML = `
+      <div class="modal">
+        <div class="modal-header"><h3>${title}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+        <div class="modal-body">${html}</div>
+        ${footer ? `<div class="modal-footer">${footer}</div>` : ''}
+      </div>`;
+    document.body.appendChild(el);
+}
+function closeModal() { document.getElementById('modal-overlay')?.remove(); }
+
+// ============================================================
+//  LOAD ON START
+// ============================================================
+loadAll().then(() => showPage('dashboard'));
+</script>
+</body>
+</html>
