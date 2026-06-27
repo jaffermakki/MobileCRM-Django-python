@@ -26,6 +26,8 @@ services:
         fromDatabase:
           name: techpro-db
           property: connectionString
-  - type: postgresql
-    name: techpro-db
+
+# ✅ Database defined at the TOP level, not inside services
+databases:
+  - name: techpro-db
     plan: free
